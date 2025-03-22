@@ -1,4 +1,7 @@
-TOKEN = "توکن_بات_شما"
-MONGO_URI = "mongodb+srv://your_user:your_pass@your_cluster.mongodb.net/?retryWrites=true&w=majority"
+import os
+
+TOKEN = os.getenv("TOKEN")
+MONGO_URI = os.getenv("MONGO_URI")
+
 DOWNLOAD_DIR = "downloads"
 EXTRACT_DIR = "extracted"
