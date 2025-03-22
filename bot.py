@@ -32,6 +32,7 @@ async def handle_file(update: Update, context):
 
     # دانلود فایل
     new_file = await update.message.document.get_file()
+    print(f"دریافت فایل: {file_name}")
     await new_file.download_to_drive(file_path)
     await update.message.reply_text(f"فایل {file_name} با موفقیت دانلود شد.")
 
