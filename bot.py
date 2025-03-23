@@ -26,6 +26,9 @@ async def handle_file(update: Update, context):
     file_path = os.path.join(DOWNLOAD_DIR, file_name)
     file_id = file.file_id
 
+    # ایجاد دایرکتوری دانلود اگر وجود ندارد
+    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    
     # ذخیره فایل در دیتابیس
     file_info = {"file_id": file_id, "file_name": file_name, "path": file_path}
     files_collection.insert_one(file_info)
