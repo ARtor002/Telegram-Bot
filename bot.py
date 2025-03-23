@@ -86,7 +86,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.Video.ALL, handle_file))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.Video, handle_file))
     app.add_handler(CallbackQueryHandler(button_handler))
     
     print("🤖 بات در حال اجراست...")
