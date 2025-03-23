@@ -1,101 +1,93 @@
 import os
-import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
-from pymongo import MongoClient
-import rarfile
+import zipfile
+import patoolib
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from dotenv import load_dotenv
 
-from config import TOKEN, MONGO_URI, DOWNLOAD_DIR, EXTRACT_DIR
+# بارگذاری متغیرهای محیطی
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DOWNLOAD_PATH = "downloads"
+os.makedirs(DOWNLOAD_PATH, exist_ok=True)
 
-# راه‌اندازی logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("سلام! فایل خود را ارسال کنید تا پردازش شود.")
 
-# اتصال به دیتابیس MongoDB
-client = MongoClient(MONGO_URI)
-db = client["telegram_bot"]
-files_collection = db["files"]
-
-async def start(update: Update, context):
-    await update.message.reply_text("سلام! من بات تلگرام شما هستم.")
-
-# ذخیره فایل‌ها در دیتابیس
-async def handle_file(update: Update, context):
-    file = update.message.document
-    file_name = file.file_name
-    file_path = os.path.join(DOWNLOAD_DIR, file_name)
-    file_id = file.file_id
-
-    # ایجاد دایرکتوری دانلود اگر وجود ندارد
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    
-    # ذخیره فایل در دیتابیس
-    file_info = {"file_id": file_id, "file_name": file_name, "path": file_path}
-    files_collection.insert_one(file_info)
-
-    # دانلود فایل
-    new_file = await update.message.document.get_file()
-    print(f"دریافت فایل: {file_name}")
-    await new_file.download_to_drive(file_path)
-    await update.message.reply_text(f"فایل {file_name} با موفقیت دانلود شد.")
-
-# استخراج فایل فشرده
-async def check_and_extract(update: Update, file_name: str):
-    base_name = file_name.split(".part")[0] if ".part" in file_name else file_name.split(".")[0]
-    all_parts = list(files_collection.find({"file_name": {"$regex": f"^{base_name}"}}))
-
-    if all_parts and all_parts[0]["file_name"].endswith(".part1.rar"):
-        part_numbers = sorted([int(f["file_name"].split(".part")[-1].split(".rar")[0]) for f in all_parts])
-        expected_parts = list(range(1, max(part_numbers) + 1))
-
-        if part_numbers == expected_parts:
-            input_path = os.path.join(DOWNLOAD_DIR, all_parts[0]["file_name"])
-            extract_path = os.path.join(EXTRACT_DIR, base_name)
-
-            os.makedirs(extract_path, exist_ok=True)
-            try:
-                with rarfile.RarFile(input_path) as rarf:
-                    rarf.extractall(extract_path)
-                await update.message.reply_text(f"استخراج کامل شد: {extract_path}")
-
-            except rarfile.BadRarFile:
-                await update.message.reply_text("فایل مشکل دارد یا خراب است!")
-            except rarfile.RarCannotExec:
-                await update.message.reply_text("لطفاً `unrar` را نصب کنید!")
-            except rarfile.PasswordRequired:
-                await update.message.reply_text("این فایل فشرده دارای رمز عبور است. لطفاً رمز را ارسال کنید.")
-                context.user_data["extract_file"] = input_path
-
-async def receive_password(update: Update, context):
-    if "extract_file" not in context.user_data:
-        await update.message.reply_text("هیچ فایلی برای رمزگذاری در انتظار نیست!")
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = update.message.document or update.message.video
+    if not file:
         return
+    
+    file_path = os.path.join(DOWNLOAD_PATH, file.file_name)
+    new_file = await file.get_file()
+    await new_file.download_to_drive(file_path)
+    
+    keyboard = [
+        [InlineKeyboardButton("📂 استخراج فایل", callback_data=f"extract_{file.file_name}")],
+        [InlineKeyboardButton("📝 تغییر نام", callback_data=f"rename_{file.file_name}")],
+        [InlineKeyboardButton("🗜️ فشرده‌سازی", callback_data=f"compress_{file.file_name}")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(f"✅ فایل `{file.file_name}` با موفقیت دانلود شد. \nلطفاً عملیات مورد نظر را انتخاب کنید:", reply_markup=reply_markup)
 
-    password = update.message.text
-    input_path = context.user_data["extract_file"]
-    extract_path = os.path.join(EXTRACT_DIR, os.path.basename(input_path))
-
+async def extract_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    file_name = query.data.split("_", 1)[1]
+    file_path = os.path.join(DOWNLOAD_PATH, file_name)
+    extract_path = os.path.join(DOWNLOAD_PATH, file_name + "_extracted")
+    os.makedirs(extract_path, exist_ok=True)
+    
     try:
-        with rarfile.RarFile(input_path) as rarf:
-            rarf.extractall(extract_path, pwd=password)
-        await update.message.reply_text(f"استخراج با موفقیت انجام شد: {extract_path}")
+        if file_name.endswith(".rar"):
+            patoolib.extract_archive(file_path, outdir=extract_path)
+        elif file_name.endswith(".zip"):
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_path)
+        await query.message.reply_text(f"✅ فایل `{file_name}` استخراج شد و در `{extract_path}` ذخیره شد.")
+    except Exception as e:
+        await query.message.reply_text(f"❌ خطا در استخراج فایل: {str(e)}")
 
-    except rarfile.BadRarFile:
-        await update.message.reply_text("فایل مشکل دارد یا خراب است!")
-    except rarfile.PasswordRequired:
-        await update.message.reply_text("رمز نادرست است! دوباره امتحان کنید.")
+async def rename_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    file_name = query.data.split("_", 1)[1]
+    file_path = os.path.join(DOWNLOAD_PATH, file_name)
+    new_name = "renamed_" + file_name
+    new_path = os.path.join(DOWNLOAD_PATH, new_name)
+    os.rename(file_path, new_path)
+    await query.message.reply_text(f"✅ فایل `{file_name}` به `{new_name}` تغییر نام یافت.")
 
-    del context.user_data["extract_file"]
+async def compress_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    file_name = query.data.split("_", 1)[1]
+    file_path = os.path.join(DOWNLOAD_PATH, file_name)
+    compressed_path = file_path + ".zip"
+    
+    try:
+        with zipfile.ZipFile(compressed_path, 'w') as zipf:
+            zipf.write(file_path, arcname=file_name)
+        await query.message.reply_text(f"✅ فایل `{file_name}` فشرده شد و در `{compressed_path}` ذخیره شد.")
+    except Exception as e:
+        await query.message.reply_text(f"❌ خطا در فشرده‌سازی فایل: {str(e)}")
 
-# راه‌اندازی بات
-def main():
-    application = Application.builder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_file))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_password))
-
-    application.run_polling()
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.data.startswith("extract_"):
+        await extract_file(update, context)
+    elif query.data.startswith("rename_"):
+        await rename_file(update, context)
+    elif query.data.startswith("compress_"):
+        await compress_file(update, context)
 
 if __name__ == "__main__":
-    main()
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.Video.ALL, handle_file))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    
+    print("🤖 بات در حال اجراست...")
+    app.run_polling()
