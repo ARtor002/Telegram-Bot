@@ -19,18 +19,34 @@ class TelegramClientManager:
         try:
             await self.initialize()
             
+            # بررسی وجود فایل
+            if not os.path.exists(file_path):
+                print(f"فایل وجود ندارد: {file_path}")
+                return False
+            
+            # بررسی اندازه فایل
+            file_size = os.path.getsize(file_path)
+            print(f"ارسال فایل: {file_path}, اندازه: {file_size} bytes")
+            
             # ارسال فایل
             await self.client.send_file(
                 entity=chat_id,
                 file=file_path,
                 caption=caption,
-                supports_streaming=True
+                supports_streaming=True,
+                progress_callback=self._progress_callback
             )
             return True
             
         except Exception as e:
             print(f"خطا در ارسال فایل: {e}")
             return False
+    
+    def _progress_callback(self, current, total):
+        """نمایش پیشرفت ارسال فایل"""
+        if total > 0:
+            percentage = (current / total) * 100
+            print(f"پیشرفت ارسال: {percentage:.1f}% ({current}/{total} bytes)")
     
     async def close(self):
         """بستن کلاینت"""
