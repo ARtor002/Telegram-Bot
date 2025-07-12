@@ -18,7 +18,7 @@ DOWNLOAD_DIR = "downloads"
 EXTRACTED_DIR = "extracted"
 TEMP_DIR = "temp"
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB در بایت
-TELEGRAM_MAX_FILE_SIZE = 1.9 * 1024 * 1024 * 1024  # 1.9GB محدودیت جدید
+TELEGRAM_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB - فقط برای تقسیم فایل‌های بسیار بزرگ
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks
 
 # تنظیمات آرشیو
