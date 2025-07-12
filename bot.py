@@ -14,9 +14,11 @@ from config import BOT_TOKEN, ADMIN_IDS, DOWNLOAD_DIR, EXTRACTED_DIR, TEMP_DIR, 
 from utils import (
     format_bytes, is_archive_file, create_progress_bar,
     get_custom_keyboard_for_files, get_archive_format_keyboard, 
-    get_skip_keyboard, get_action_keyboard, create_directories,
+    get_skip_keyboard, get_action_keyboard, get_archive_action_keyboard,
+    get_continue_keyboard, create_directories,
     cleanup_temp_files, extract_archive, create_archive,
-    split_large_file, rename_files_with_numbers, get_total_size
+    split_large_file, rename_files_with_numbers, get_total_size,
+    send_file_with_client_api
 )
 
 # راه‌اندازی logging
@@ -30,15 +32,20 @@ logger = logging.getLogger(__name__)
 (
     WAITING_FILES, WAITING_RENAME, WAITING_ARCHIVE_NAME, 
     WAITING_PASSWORD, WAITING_EXTRACT_PASSWORD, WAITING_NEW_ARCHIVE_NAME,
-    WAITING_NEW_PASSWORD, CHOOSING_ACTION
-) = range(8)
+    WAITING_NEW_PASSWORD, CHOOSING_ACTION, WAITING_ARCHIVE_ACTION
+) = range(9)
 
 class FileManager:
+    """
+    مدیریت session هر کاربر برای ذخیره وضعیت فعلی عملیات
+    """
     def __init__(self):
         self.user_sessions: Dict[int, Dict] = {}
         
     def get_session(self, user_id: int) -> Dict:
-        """دریافت session کاربر"""
+        """
+        دریافت یا ایجاد session جدید برای هر کاربر
+        """
         if user_id not in self.user_sessions:
             self.user_sessions[user_id] = {
                 'files': [],
@@ -52,14 +59,18 @@ class FileManager:
         return self.user_sessions[user_id]
     
     def clear_session(self, user_id: int):
-        """پاک کردن session کاربر"""
+        """
+        پاک کردن session کاربر (پس از اتمام یا لغو عملیات)
+        """
         if user_id in self.user_sessions:
             del self.user_sessions[user_id]
 
 file_manager = FileManager()
 
 def admin_required(func):
-    """Decorator برای بررسی ادمین بودن کاربر"""
+    """
+    دکوراتور برای محدود کردن دسترسی فقط به ادمین‌ها
+    """
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         if user_id not in ADMIN_IDS:
@@ -69,42 +80,46 @@ def admin_required(func):
     return wrapper
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """شروع ربات"""
+    """
+    شروع ربات و پاک‌سازی session قبلی کاربر
+    """
     user_id = update.effective_user.id
     if user_id not in ADMIN_IDS:
         await update.message.reply_text(MESSAGES['not_admin'])
         return
     
-    create_directories()
+    create_directories()  # اطمینان از وجود دایرکتوری‌های مورد نیاز
     file_manager.clear_session(user_id)
     await update.message.reply_text(MESSAGES['start'])
 
 @admin_required
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """مدیریت فایل‌های دریافتی"""
+    """
+    مدیریت فایل‌های دریافتی از کاربر (چه فشرده چه غیر فشرده)
+    """
     user_id = update.effective_user.id
     session = file_manager.get_session(user_id)
     
     try:
-        # دانلود فایل
+        # دانلود فایل ارسالی
         file = update.message.document
         file_path = os.path.join(DOWNLOAD_DIR, file.file_name)
         
-        # نمایش پیام در حال دانلود
+        # نمایش پیام پیشرفت دانلود
         progress_msg = await update.message.reply_text("📥 در حال دانلود...")
         
-        # دانلود فایل
+        # دانلود فایل به صورت محلی
         downloaded_file = await file.get_file()
         await downloaded_file.download_to_drive(file_path)
         
-        # اضافه کردن به لیست فایل‌ها
+        # اضافه کردن فایل به session
         session['files'].append(file_path)
         
-        # محاسبه اطلاعات
+        # محاسبه تعداد و حجم کل فایل‌ها
         file_count = len(session['files'])
         total_size = get_total_size(session['files'])
         
-        # بروزرسانی پیام
+        # بروزرسانی پیام پیشرفت
         await progress_msg.edit_text(
             MESSAGES['file_received'].format(
                 filename=file.file_name,
@@ -113,21 +128,38 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         )
         
-        # اگر اولین فایل است، نمایش کیبورد
+        # اگر اولین فایل است، بررسی نوع فایل و نمایش کیبورد مناسب
         if file_count == 1:
-            # بررسی نوع فایل
             if is_archive_file(file.file_name):
-                await handle_archive_file(update, context, file_path)
-                return WAITING_EXTRACT_PASSWORD
+                # اگر فایل فشرده است، از کاربر نوع عملیات را می‌پرسیم
+                await update.message.reply_text(
+                    "📦 فایل فشرده دریافت شد. چه عملیاتی می‌خواهید انجام دهید؟",
+                    reply_markup=get_archive_action_keyboard()
+                )
+                session['current_stage'] = 'archive_action'
+                return WAITING_ARCHIVE_ACTION
             else:
+                # اگر فایل غیر فشرده است، کیبورد ارسال فایل بیشتر نمایش داده می‌شود
                 await update.message.reply_text(
                     MESSAGES['waiting_for_files'],
                     reply_markup=get_custom_keyboard_for_files()
                 )
                 return WAITING_FILES
         else:
-            await update.message.reply_text(MESSAGES['waiting_for_files'])
-            return WAITING_FILES
+            # اگر فایل‌های بیشتری ارسال شد
+            if session.get('current_stage') == 'archive_action':
+                # اگر در مرحله انتخاب عملیات آرشیو هستیم
+                await update.message.reply_text(
+                    "📁 فایل اضافی دریافت شد. لطفاً ابتدا عملیات فایل قبلی را انتخاب کنید.",
+                    reply_markup=get_archive_action_keyboard()
+                )
+                return WAITING_ARCHIVE_ACTION
+            else:
+                await update.message.reply_text(
+                    MESSAGES['waiting_for_files'],
+                    reply_markup=get_custom_keyboard_for_files()
+                )
+                return WAITING_FILES
             
     except Exception as e:
         await update.message.reply_text(MESSAGES['error'].format(error=str(e)))
@@ -153,16 +185,24 @@ async def finish_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first_file = session['files'][0]
     
     if is_archive_file(os.path.basename(first_file)):
-        # فایل فشرده - درخواست رمز
-        await update.message.reply_text(
-            MESSAGES['password_request'],
-            reply_markup=ReplyKeyboardRemove()
-        )
-        await update.message.reply_text(
-            "یا اگر رمز ندارد:",
-            reply_markup=get_skip_keyboard()
-        )
-        return WAITING_EXTRACT_PASSWORD
+        # اگر در مرحله انتخاب عملیات آرشیو هستیم
+        if session.get('current_stage') == 'archive_action':
+            await update.message.reply_text(
+                "📦 لطفاً ابتدا نوع عملیات را انتخاب کنید:",
+                reply_markup=get_archive_action_keyboard()
+            )
+            return WAITING_ARCHIVE_ACTION
+        else:
+            # فایل فشرده - درخواست رمز
+            await update.message.reply_text(
+                MESSAGES['password_request'],
+                reply_markup=ReplyKeyboardRemove()
+            )
+            await update.message.reply_text(
+                "یا اگر رمز ندارد:",
+                reply_markup=get_skip_keyboard()
+            )
+            return WAITING_EXTRACT_PASSWORD
     else:
         # فایل‌های غیر فشرده - درخواست تغییر نام
         await update.message.reply_text(
@@ -272,6 +312,27 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return CHOOSING_ACTION
     
+    elif query.data.startswith("archive_action_"):
+        action = query.data.split("_")[2]
+        session['archive_action'] = action
+        
+        if action == "extract":
+            # استخراج فایل فشرده
+            await query.edit_message_text(
+                MESSAGES['password_request'],
+                reply_markup=get_skip_keyboard()
+            )
+            session['current_stage'] = 'extract_password'
+            return WAITING_EXTRACT_PASSWORD
+        elif action == "compress":
+            # فشرده‌سازی مجدد
+            await query.edit_message_text(
+                MESSAGES['rename_request'],
+                reply_markup=get_skip_keyboard()
+            )
+            session['current_stage'] = 'rename'
+            return WAITING_RENAME
+    
     elif query.data.startswith("format_"):
         format_type = query.data.split("_")[1]
         session['archive_format'] = format_type
@@ -336,23 +397,40 @@ async def start_compression(query, context: ContextTypes.DEFAULT_TYPE, user_id: 
             
             # ارسال فایل‌ها
             for i, part_path in enumerate(parts):
-                with open(part_path, 'rb') as f:
-                    await context.bot.send_document(
-                        chat_id=user_id,
-                        document=f,
-                        filename=os.path.basename(part_path),
-                        caption=f"📦 بخش {i+1} از {len(parts)}"
+                file_size = os.path.getsize(part_path)
+                
+                # اگر فایل بزرگتر از 50MB است، از Client API استفاده کن
+                if file_size > 50 * 1024 * 1024:  # 50MB
+                    success = await send_file_with_client_api(
+                        user_id, 
+                        part_path, 
+                        f"📦 بخش {i+1} از {len(parts)}"
                     )
+                    if not success:
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=f"❌ خطا در ارسال بخش {i+1}"
+                        )
+                else:
+                    # برای فایل‌های کوچک از Bot API استفاده کن
+                    with open(part_path, 'rb') as f:
+                        await context.bot.send_document(
+                            chat_id=user_id,
+                            document=f,
+                            filename=os.path.basename(part_path),
+                            caption=f"📦 بخش {i+1} از {len(parts)}"
+                        )
             
             await context.bot.send_message(
                 chat_id=user_id,
                 text=MESSAGES['success']
             )
         else:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="❌ خطا در فشرده‌سازی فایل‌ها"
-            )
+                    await context.bot.send_message(
+            chat_id=user_id,
+            text="❌ خطا در فشرده‌سازی فایل‌ها",
+            reply_markup=ReplyKeyboardRemove()
+        )
         
         # پاک کردن فایل‌های موقت
         cleanup_temp_files(temp_dir)
@@ -363,7 +441,8 @@ async def start_compression(query, context: ContextTypes.DEFAULT_TYPE, user_id: 
     except Exception as e:
         await context.bot.send_message(
             chat_id=user_id,
-            text=MESSAGES['error'].format(error=str(e))
+            text=MESSAGES['error'].format(error=str(e)),
+            reply_markup=ReplyKeyboardRemove()
         )
     
     finally:
@@ -408,17 +487,34 @@ async def start_extraction(query, context: ContextTypes.DEFAULT_TYPE, user_id: i
                 parts = split_large_file(file_path)
                 
                 for i, part_path in enumerate(parts):
-                    with open(part_path, 'rb') as f:
-                        await context.bot.send_document(
-                            chat_id=user_id,
-                            document=f,
-                            filename=os.path.basename(part_path),
-                            caption=f"📤 {file}" + (f" - بخش {i+1}" if len(parts) > 1 else "")
+                    file_size = os.path.getsize(part_path)
+                    
+                    # اگر فایل بزرگتر از 50MB است، از Client API استفاده کن
+                    if file_size > 50 * 1024 * 1024:  # 50MB
+                        success = await send_file_with_client_api(
+                            user_id, 
+                            part_path, 
+                            f"📤 {file}" + (f" - بخش {i+1}" if len(parts) > 1 else "")
                         )
+                        if not success:
+                            await context.bot.send_message(
+                                chat_id=user_id,
+                                text=f"❌ خطا در ارسال {file} - بخش {i+1}"
+                            )
+                    else:
+                        # برای فایل‌های کوچک از Bot API استفاده کن
+                        with open(part_path, 'rb') as f:
+                            await context.bot.send_document(
+                                chat_id=user_id,
+                                document=f,
+                                filename=os.path.basename(part_path),
+                                caption=f"📤 {file}" + (f" - بخش {i+1}" if len(parts) > 1 else "")
+                            )
         
         await context.bot.send_message(
             chat_id=user_id,
-            text=MESSAGES['success']
+            text=MESSAGES['success'],
+            reply_markup=ReplyKeyboardRemove()
         )
         
         # پاک کردن فایل‌های موقت
@@ -430,7 +526,8 @@ async def start_extraction(query, context: ContextTypes.DEFAULT_TYPE, user_id: i
     except Exception as e:
         await context.bot.send_message(
             chat_id=user_id,
-            text=MESSAGES['error'].format(error=str(e))
+            text=MESSAGES['error'].format(error=str(e)),
+            reply_markup=ReplyKeyboardRemove()
         )
     
     finally:

@@ -1,0 +1,12 @@
+# تنظیمات ربات تلگرام
+BOT_TOKEN=your_bot_token_here
+
+# تنظیمات Telegram Client API (برای فایل‌های بزرگ)
+API_ID=your_api_id_here
+API_HASH=your_api_hash_here
+
+# نکات مهم:
+# 1. BOT_TOKEN را از @BotFather دریافت کنید
+# 2. API_ID و API_HASH را از https://my.telegram.org دریافت کنید
+# 3. این فایل را .env نامگذاری کنید
+# 4. این فایل را در git commit نکنید (امنیت) 
