@@ -5,7 +5,7 @@ from typing import List
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 ADMIN_IDS: List[int] = [
     # آی‌دی ادمین‌ها رو اینجا اضافه کنید
-    # مثال: 123456789, 987654321
+    108587157 #,مثال: 123456789
 ]
 
 # تنظیمات فایل
