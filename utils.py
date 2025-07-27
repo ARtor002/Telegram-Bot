@@ -10,7 +10,7 @@ from pathlib import Path
 import asyncio
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 
-from config import SUPPORTED_ARCHIVE_FORMATS, MAX_FILE_SIZE, TELEGRAM_MAX_FILE_SIZE, PROGRESS_EMOJIS
+from config import SUPPORTED_ARCHIVE_FORMATS, MAX_FILE_SIZE, PROGRESS_EMOJIS
 from telegram_client import telegram_client
 
 # --- توابع کمکی برای نمایش و مدیریت فایل‌ها ---
@@ -159,7 +159,7 @@ async def create_archive(source_path: str, archive_path: str, format_type: str, 
         print(f"خطا در ایجاد آرشیو: {e}")
         return False
 
-def split_large_file(file_path: str, max_size: int = TELEGRAM_MAX_FILE_SIZE) -> List[str]:
+def split_large_file(file_path: str, max_size: int = MAX_FILE_SIZE) -> List[str]:
     """تقسیم فایل بزرگ به قسمت‌های کوچک‌تر برای ارسال در تلگرام"""
     file_size = os.path.getsize(file_path)
     if file_size <= max_size:

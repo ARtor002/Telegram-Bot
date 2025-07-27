@@ -399,17 +399,27 @@ async def start_compression(query, context: ContextTypes.DEFAULT_TYPE, user_id: 
             for i, part_path in enumerate(parts):
                 file_size = os.path.getsize(part_path)
                 
-                # برای همه فایل‌ها از Client API استفاده کن (Bot API محدودیت 50MB دارد)
+                # برای همه فایل‌ها از Client API استفاده کن (برای اطمینان)
                 success = await send_file_with_client_api(
                     user_id, 
                     part_path, 
                     f"📦 بخش {i+1} از {len(parts)}"
                 )
                 if not success:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"❌ خطا در ارسال بخش {i+1}"
-                    )
+                    # اگر Client API شکست خورد، از Bot API استفاده کن
+                    try:
+                        with open(part_path, 'rb') as f:
+                            await context.bot.send_document(
+                                chat_id=user_id,
+                                document=f,
+                                filename=os.path.basename(part_path),
+                                caption=f"📦 بخش {i+1} از {len(parts)}"
+                            )
+                    except Exception as e:
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=f"❌ خطا در ارسال بخش {i+1}: {str(e)}"
+                        )
             
             await context.bot.send_message(
                 chat_id=user_id,
@@ -479,17 +489,27 @@ async def start_extraction(query, context: ContextTypes.DEFAULT_TYPE, user_id: i
                 for i, part_path in enumerate(parts):
                     file_size = os.path.getsize(part_path)
                     
-                    # برای همه فایل‌ها از Client API استفاده کن (Bot API محدودیت 50MB دارد)
+                    # برای همه فایل‌ها از Client API استفاده کن (برای اطمینان)
                     success = await send_file_with_client_api(
                         user_id, 
                         part_path, 
                         f"📤 {file}" + (f" - بخش {i+1}" if len(parts) > 1 else "")
                     )
                     if not success:
-                        await context.bot.send_message(
-                            chat_id=user_id,
-                            text=f"❌ خطا در ارسال {file} - بخش {i+1}"
-                        )
+                        # اگر Client API شکست خورد، از Bot API استفاده کن
+                        try:
+                            with open(part_path, 'rb') as f:
+                                await context.bot.send_document(
+                                    chat_id=user_id,
+                                    document=f,
+                                    filename=os.path.basename(part_path),
+                                    caption=f"📤 {file}" + (f" - بخش {i+1}" if len(parts) > 1 else "")
+                                )
+                        except Exception as e:
+                            await context.bot.send_message(
+                                chat_id=user_id,
+                                text=f"❌ خطا در ارسال {file} - بخش {i+1}: {str(e)}"
+                            )
         
         await context.bot.send_message(
             chat_id=user_id,
