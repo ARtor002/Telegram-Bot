@@ -29,7 +29,7 @@
 ### 1. دریافت کد
 
 ```bash
-git clone https://github.com/your-username/telegram-file-manager-bot
+git clone https://github.com/ARtor002/telegram-file-manager-bot
 cd telegram-file-manager-bot
 ```
 
